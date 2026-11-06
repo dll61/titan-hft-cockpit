@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OKX-Titan HFT Console | 交易控制台 · 验收版本</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root { color-scheme: dark; scrollbar-color: #475569 #0f172a; }
+        button { cursor: pointer; }
+        button:disabled { opacity: .42; cursor: not-allowed; filter: saturate(.3); }
+        button[aria-pressed="true"] { outline: 2px solid #22d3ee; outline-offset: 1px; }
+        input[type=number], select { color: #e2e8f0; background: #0f172a; border: 1px solid #475569; border-radius: 4px; padding: 4px 6px; }
+        #mode-status { color: #fbbf24; font-weight: 700; }
+        #command-status { min-height: 1.5em; }
+        #command-status[data-tone="error"] { color: #fda4af; }
+        button:focus-visible, input:focus-visible { outline: 2px solid #00f0ff; outline-offset: 3px; }
+        @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", monospace; }
+        .cyber-border { border: 1px solid rgba(0, 240, 255, 0.2); box-shadow: 0 0 15px rgba(0, 240, 255, 0.05); }
+        .cyber-btn-long { background: linear-gradient(135deg, #059669, #10b981); }
+        .cyber-btn-long:hover { background: linear-gradient(135deg, #10b981, #34d399); }
+        .cyber-btn-short { background: linear-gradient(135deg, #dc2626, #ef4444); }
+        .cyber-btn-short:hover { background: linear-gradient(135deg, #ef4444, #f87171); }
+        .cyber-btn-panic { background: linear-gradient(135deg, #b91c1c, #991b1b); }
+        /* Custom styled slider */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: #1e293b;
+            height: 6px;
+            border-radius: 3px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #00f0ff;
+            cursor: pointer;
+            box-shadow: 0 0 8px #00f0ff;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 flex flex-col justify-between">
+
+    <section class="bg-slate-900 border border-amber-700 rounded-lg p-3 mb-3" aria-label="交易运行状态">
+        <div id="build-status" class="text-xs text-slate-400">后台版本待确认</div>
+        <div id="mode-status" role="status">只读验收 · 实盘开仓/平仓/撤单未启用</div>
+        <div id="command-status" role="status" aria-live="polite">等待后台连接。参数仅供验收，不修改交易所现有委托。未启用的交易操作不会发送委托。</div>
+    </section>
+    <section class="bg-slate-900 border border-slate-700 rounded-xl p-3 mb-4" aria-label="交易平台切换">
+        <div class="flex flex-wrap gap-2">
+            <button data-platform="OKX" onclick="switchPlatform('OKX')" class="px-4 py-2 rounded bg-slate-800">OKX</button>
+            <button data-platform="BINANCE" onclick="switchPlatform('BINANCE')" class="px-4 py-2 rounded bg-slate-800">Binance Futures</button>
+            <button data-platform="LIGHTER" onclick="switchPlatform('LIGHTER')" class="px-4 py-2 rounded bg-slate-800">Lighter</button>
+            <button data-platform="HYPERLIQUID" onclick="switchPlatform('HYPERLIQUID')" class="px-4 py-2 rounded bg-slate-800">Hyperliquid</button>
+            <button onclick="connectPlatform()" class="px-4 py-2 rounded bg-cyan-900">连接 / 刷新当前平台</button>
+        </div>
+        <div id="platform-status" role="status" class="text-sm mt-2">OKX · 未连接 · 实盘执行未验收</div>
+        <div id="account-age" class="text-xs text-slate-400">账户与持仓尚未读取</div>
+        <div class="mt-3 flex flex-col md:flex-row gap-2 items-stretch md:items-center">
+            <div class="relative flex-1">
+                <input id="symbol-search-input" type="text" placeholder="🔍 快速搜索标的 (支持代码/英文/中文如: 布鲁姆, 海力士, 桑迪亚, 特斯拉, 谷歌, 英特尔, SOXL, SPCX, QQQ, 狗狗币, 佩佩...)" 
+                       class="w-full bg-slate-950 border border-cyan-800 rounded px-3 py-1.5 text-xs text-cyan-300 placeholder-slate-500 font-mono focus:border-cyan-400 focus:outline-none"
+                       oninput="onSymbolSearch(this.value)" onkeydown="onSymbolSearchKeyDown(event)">
+            </div>
+            <button id="btn-toggle-drawer" type="button" onclick="toggleMarketDrawer()" class="px-3 py-1.5 rounded bg-cyan-700 hover:bg-cyan-600 text-xs text-white font-bold flex items-center gap-1 shadow cursor-pointer whitespace-nowrap active:scale-95 transition-all">
+                📑 标的速览与自选 (拉开抽屉)
+            </button>
+            <label class="flex items-center gap-2 text-xs text-slate-300">
+                <span class="whitespace-nowrap font-bold text-slate-400">平台全标的:</span>
+                <select id="native-market" aria-label="平台原生交易标的" onchange="selectSymbol(this.value)" class="bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 max-w-[280px]"></select>
+            </label>
+        </div>
+
+        <!-- Collapsible Market Drawer ("旁边拉开来看") -->
+        <div id="market-drawer" class="hidden mt-3 p-3 bg-slate-950/95 border border-cyan-500/80 rounded-xl shadow-2xl backdrop-blur transition-all">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5 mb-2.5">
+                <div class="flex flex-wrap gap-1.5" id="drawer-categories">
+                    <button type="button" data-cat="FAV" onclick="setDrawerCategory('FAV')" class="px-2.5 py-1 rounded text-xs font-black bg-cyan-500 text-slate-950 shadow cursor-pointer">🌟 我的自选</button>
+                    <button type="button" data-cat="ALL" onclick="setDrawerCategory('ALL')" class="px-2.5 py-1 rounded text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer">⚡ 全部标的</button>
+                    <button type="button" data-cat="TRADIFI" onclick="setDrawerCategory('TRADIFI')" class="px-2.5 py-1 rounded text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer">🏛️ 常用美股 TradFi</button>
+                    <button type="button" data-cat="MAJOR" onclick="setDrawerCategory('MAJOR')" class="px-2.5 py-1 rounded text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer">💎 主流公链</button>
+                    <button type="button" data-cat="MEME" onclick="setDrawerCategory('MEME')" class="px-2.5 py-1 rounded text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer">🐕 Meme 暴富神币</button>
+                    <button type="button" data-cat="AI" onclick="setDrawerCategory('AI')" class="px-2.5 py-1 rounded text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer">🤖 AI / 半导体</button>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span id="drawer-count-badge" class="text-xs text-cyan-400 font-mono font-bold">0 个标的</span>
+                    <button type="button" onclick="toggleMarketDrawer(false)" class="text-xs text-slate-400 hover:text-white px-2.5 py-0.5 rounded bg-slate-800 border border-slate-700 cursor-pointer">✕ 收起抽屉</button>
+                </div>
+            </div>
+            <!-- Item grid with scroll -->
+            <div id="drawer-items-container" class="max-h-72 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 p-1">
+                <!-- Dynamically populated -->
+            </div>
+        </div>
+        <!-- Pinned Kings / Favorites Quick Access Chips -->
+        <div class="mt-3 pt-2.5 border-t border-slate-800">
+            <div class="flex items-center justify-between text-xs text-slate-400 mb-2">
+                <span class="font-bold text-cyan-400 flex items-center gap-1">👑 常用王牌标的 (点击秒切 · 配套平台顶格杠杆):</span>
+                <span class="text-slate-500 text-[10px]">快捷键 [Tab] 或 [ [ / ] ] 轮换</span>
+            </div>
+            <div id="pinned-favorites-bar" class="flex flex-wrap gap-1.5">
+                <!-- Dynamically populated per platform -->
+            </div>
+        </div>
+        <p class="text-xs text-slate-400 mt-2">切换不会开平仓、撤单或调整交易所杠杆。最大倍数、最小数量与报价币种分别读取；未核验的上限不可选。</p>
+    </section>
+    <!-- Top Status Bar -->
+    <header class="bg-slate-900 cyber-border rounded-xl px-5 py-3 flex items-center justify-between mb-4">
+        <div class="flex items-center space-x-3">
+            <div id="connection-status" role="status" aria-live="polite" class="text-xs">未连接 · 实盘禁用</div>
+            <h1 class="text-xl font-black tracking-wider text-cyan-400">OKX-TITAN <span class="text-xs font-normal text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-cyan-900">v2.1 验收版本</span></h1>
+        </div>
+        <div class="flex items-center space-x-6 text-sm">
+            <div><span class="text-slate-400">延迟:</span> <span id="ping-rtt" class="font-mono text-emerald-400 font-bold">—</span></div>
+            <div><span class="text-slate-400">总权益:</span> <span id="total-equity" class="font-mono text-yellow-400 font-bold text-base">—</span></div>
+            <div><span class="text-slate-400">可用保证金:</span> <span id="avail-bal" class="font-mono text-cyan-300 font-bold text-base">—</span></div>
+            <div class="bg-slate-800 px-3 py-1 rounded text-xs text-slate-300 border border-slate-700">账户计价：<span id="account-currency">未核验</span></div>
+        </div>
+    </header>
+
+    <section aria-label="当前标的独立保护" class="bg-slate-900 rounded-xl p-4 mb-4 border border-slate-700">
+        <strong>当前标的独立保护 · <span id="risk-symbol">SOXL-USDT-SWAP</span></strong>
+        <p class="text-xs text-slate-400">默认手动平仓。ROE = 估算净盈亏 ÷ 本仓累计保证金；峰值回撤 = 估算净利润从最高值回落的比例。当前费用为离线估算，真实费率、资金费与成交同步尚待验收。</p>
+        <div class="flex flex-wrap gap-4 mt-3">
+            <label><input id="risk-sl-on" type="checkbox" onchange="setProtection('stop_loss_enabled',this.checked)"> 自动止损 [J]
+                <input aria-label="止损ROE滑块" type="range" min="0.1" max="100" step="0.1" value="5" oninput="setProtectionPercent('stop_loss_pct',this.value)" style="width:5em">
+                <input aria-label="本仓止损ROE百分比" id="risk-sl-pct" type="number" min="0" step="any" value="5" style="width:6em" onchange="setProtectionPercent('stop_loss_pct',this.value)"> % ROE</label>
+            <label><input id="risk-tp-on" type="checkbox" onchange="toggleFixedTP(this.checked)"> 固定止盈 [K]
+                <input aria-label="止盈ROE滑块" type="range" min="0.1" max="1000" step="0.1" value="2" oninput="setProtectionPercent('fixed_take_profit_pct',this.value)" style="width:5em">
+                <input aria-label="本仓止盈ROE百分比" id="risk-tp-pct" type="number" step="any" value="2" style="width:6em" onchange="if(document.getElementById('risk-tp-on').checked)setProtectionPercent('fixed_take_profit_pct',this.value)"> % ROE</label>
+            <label><input id="risk-be-on" type="checkbox" onchange="setProtection('breakeven_enabled',this.checked)"> 保本锁 [Q]
+                <input aria-label="保本激活ROE滑块" type="range" min="0.1" max="100" step="0.1" value="1" oninput="setProtectionPercent('breakeven_activation',this.value)" style="width:5em">
+                <input aria-label="保本激活ROE百分比" id="risk-be-pct" type="number" min="0" step="any" value="1" style="width:6em" onchange="setProtectionPercent('breakeven_activation',this.value)"> % 激活</label>
+            <label><input id="risk-tr-on" type="checkbox" onchange="setProtection('trailing_enabled',this.checked)"> 回撤止盈 [G]
+                <input aria-label="峰值回撤比例滑块" type="range" min="0.1" max="100" step="0.1" value="30" oninput="setProtectionPercent('trailing_retrace_ratio',this.value)" style="width:5em">
+                <input aria-label="净利润峰值回撤百分比" id="risk-tr-pct" type="number" min="0" step="any" value="30" style="width:6em" onchange="setProtectionPercent('trailing_retrace_ratio',this.value)"> % 峰值回撤</label>
+            <label>回撤止盈激活 <input aria-label="回撤止盈激活ROE百分比" id="risk-activation-pct" type="number" min="0" step="any" value="2" style="width:6em" onchange="setProtectionPercent('trailing_activation',this.value)"> % ROE</label>
+            <button onclick="disableProtection()" class="px-3 py-1 rounded bg-slate-700">本标的全部关闭，手动平仓</button>
+        </div>
+        <fieldset class="mt-3 flex flex-wrap gap-4" aria-label="金额风控">
+            <legend>金额风控（账户计价币；填入后替代对应百分比，留空恢复百分比）</legend>
+            <label>亏损金额（需开启自动止损）<input id="risk-stop_loss_amount" type="number" min="0" step="any" placeholder="使用百分比" onchange="setProtectionAmount('stop_loss_amount',this.value)"></label>
+            <label>止盈/回升退出金额（填写即配置）<input id="risk-fixed_take_profit_amount" type="number" step="any" placeholder="使用百分比或关闭" onchange="setProtectionAmount('fixed_take_profit_amount',this.value)"></label>
+            <label>动态止盈激活金额<input id="risk-trailing_activation_amount" type="number" min="0" step="any" placeholder="使用百分比" onchange="setProtectionAmount('trailing_activation_amount',this.value)"></label>
+            <label>峰值允许回撤金额<input id="risk-trailing_retrace_amount" type="number" min="0" step="any" placeholder="使用百分比" onchange="setProtectionAmount('trailing_retrace_amount',this.value)"></label>
+        </fieldset>
+        <p class="text-xs text-slate-400 mt-2">止损输入亏损幅度，例如 1000 表示 -1000% ROE；交易所可能先强平。止盈可填负数，表示回升至该亏损水平时退出。零阈值启用后可能立即触发。动态止盈需开启 [G]。本版本尚未验收 APP 与控制台双重保护的成交同步。</p>
+        <div class="mt-3 text-sm">
+            <label>开仓执行 <select id="execution-mode" aria-label="开仓执行偏好"  onchange="setExecution()">
+                <option value="balanced">均衡：Maker优先，超时限价IOC</option><option value="speed">速度：直接限价IOC</option><option value="maker_only">费用：只挂Maker，允许不成交</option>
+            </select></label>
+            <label>最大追价 <input id="slippage-bps" aria-label="开仓最大追价基点" type="number" min="0.1" max="100" step="0.1" value="10" style="width:6em" onchange="setExecution()"> bps（10 bps = 0.10%，可能部分成交或不成交）</label>
+        </div>
+        <div class="mt-3 text-sm">
+            <span style="display:none;"><input type="checkbox" id="account-breaker-on" onchange="setAccountBreaker()"><input id="account-breaker-pct" aria-label="账户净值回撤熔断百分比" type="number" min="0.1" max="99" value="8" style="width:6em" onchange="setAccountBreaker()"></span>
+            <span id="risk-status" role="status">自动保护未开启</span>
+        </div>
+    </section>
+
+    <!-- Symbol Selection Bar (12 Instruments) -->
+    <nav class="bg-slate-900 cyber-border rounded-xl p-3 mb-4">
+        <div class="text-xs text-slate-400 font-semibold mb-2 flex justify-between">
+            <span>标的快捷池 (按 [Tab] 或 [ [ / ] ] 轮换):</span>
+            <span class="text-cyan-400">原生标的与倍数以当前平台返回为准</span>
+        </div>
+        <div id="symbol-bar" class="grid grid-cols-6 sm:grid-cols-12 gap-2">
+            <!-- Dynamically populated -->
+        </div>
+    </nav>
+
+    <!-- Main Operational Workspace (Left: Controls, Right: Dual-Slot Monitor) -->
+    <main class="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-grow mb-4">
+        
+        <!-- Left 7 Cols: Interactive Controls (Sliders & Big Action Buttons) -->
+        <section class="lg:col-span-7 bg-slate-900 cyber-border rounded-xl p-5 flex flex-col justify-between">
+            
+            <!-- Focused Header Banner -->
+            <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+                <div>
+                    <span class="text-xs text-cyan-400 font-bold tracking-widest uppercase">当前活跃标的</span>
+                    <h2 id="focused-title" class="text-2xl font-black text-white">先连接平台并选择标的</h2>
+                    <span id="focused-desc" class="text-xs text-slate-400">等待当前标的行情核验</span>
+                </div>
+                <div class="text-right">
+                    <div id="market-status" class="text-xs text-amber-300" role="status">当前标的行情未就绪</div>
+                    <div id="focused-price" class="text-3xl font-mono font-black text-cyan-300">—</div>
+                    <div class="text-xs text-slate-400 font-mono">买一: <span id="focused-bid" class="text-emerald-400">—</span> | 卖一: <span id="focused-ask" class="text-red-400">—</span></div>
+                </div>
+            </div>
+
+            <!-- Control 1: Dynamic Leverage Sliders -->
+            <div class="py-3 border-b border-slate-800">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-sm font-bold text-slate-300">杠杆倍数 (快捷键: <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-cyan-400">L</kbd>):</span>
+                    <span id="lever-badge" class="font-mono text-lg font-black text-yellow-400">1x</span>
+                </div>
+                <div class="flex space-x-2 mb-2">
+                    <button data-lever-tier="low" onclick="setLeverageTier('low')" class="lever-btn flex-1 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">低 (25%)</button>
+                    <button data-lever-tier="mid" onclick="setLeverageTier('mid')" class="lever-btn flex-1 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">中 (50%)</button>
+                    <button data-lever-tier="high" onclick="setLeverageTier('high')" class="lever-btn flex-1 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">高 (75%)</button>
+                    <button data-lever-tier="max" onclick="setLeverageTier('max')" class="lever-btn flex-1 py-1 text-xs bg-cyan-900/60 text-cyan-300 font-bold hover:bg-cyan-800 rounded border border-cyan-700">顶格 MAX</button>
+                </div>
+                <input type="range" aria-label="杠杆倍数" id="lever-slider" min="1" max="20" value="1" class="w-full" oninput="onLeverageSliderChange(this.value)">
+            </div>
+
+            <!-- Control 2: Position Ratio Sliders -->
+            <div class="py-3 border-b border-slate-800">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-sm font-bold text-slate-300">仓位比例 (快捷键: <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-cyan-400">1~6</kbd> | 加仓按剩余资金算):</span>
+                    <span id="ratio-badge" class="font-mono text-lg font-black text-cyan-400">20.0% (1/5)</span>
+                </div>
+                <div class="grid grid-cols-6 gap-2 mb-2">
+                    <button data-ratio="0.05" onclick="setRatio(0.05)" class="ratio-btn py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">1/20 (5%)</button>
+                    <button data-ratio="0.10" onclick="setRatio(0.10)" class="ratio-btn py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">1/10 (10%)</button>
+                    <button data-ratio="0.20" onclick="setRatio(0.20)" class="ratio-btn py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700 font-bold text-cyan-300">1/5 (20%)</button>
+                    <button data-ratio="0.25" onclick="setRatio(0.25)" class="ratio-btn py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">1/4 (25%)</button>
+                    <button data-ratio="0.3333333333333333" onclick="setRatio(1/3)" class="ratio-btn py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">1/3 (33.333%)</button>
+                    <button data-ratio="0.50" onclick="setRatio(0.50)" class="ratio-btn py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">1/2 (50%)</button>
+                </div>
+                <label class="text-sm">自定义仓位 <input id="ratio-input" aria-label="自定义仓位百分比" type="number" min="0.000001" max="100" step="any" value="20" oninput="onRatioSliderChange(this.value)" style="width:7em"> %</label>
+                <input type="range" aria-label="仓位百分比" id="ratio-slider" min="0.01" max="100" step="0.01" value="20" class="w-full" oninput="onRatioSliderChange(this.value)">
+            </div>
+
+            <!-- Control 3: Stop-Loss Sliders -->
+            <div class="py-3 border-b border-slate-800">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-sm font-bold text-slate-300">止损ROE配置（开关见上方） (快捷键: <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-cyan-400">F</kbd>):</span>
+                    <span id="sl-badge" class="font-mono text-lg font-black text-rose-400">-5.0% 保证金</span>
+                </div>
+                <div class="flex space-x-2 mb-2">
+                    <button onclick="setStopLoss(0.03)" class="sl-btn flex-1">-3%</button>
+                    <button onclick="setStopLoss(0.05)" class="sl-btn flex-1 py-1 text-xs bg-rose-950/80 text-rose-300 font-bold hover:bg-rose-900 rounded border border-rose-700">-5% 极速斩杀</button>
+                    <button onclick="setStopLoss(0.10)" class="sl-btn flex-1 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">-10% 标准</button>
+                    <button onclick="setStopLoss(0.08)" class="sl-btn flex-1 py-1 text-xs bg-slate-800 hover:bg-slate-700 rounded border border-slate-700">-8%</button>
+                </div>
+                <input type="range" aria-label="止损百分比" id="sl-slider" min="0.5" max="100" step="0.5" value="5" class="w-full" oninput="onStopLossSliderChange(this.value)">
+            </div>
+
+            <!-- Mode Selector Bar (Speed vs Balanced) -->
+            <div class="mt-3 flex items-center justify-between bg-slate-900/80 px-3 py-2 rounded-xl border border-slate-700/80 shadow-inner">
+                <span class="text-xs text-slate-200 font-bold flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    开仓执行模式:
+                </span>
+                <div class="flex gap-2 text-xs">
+                    <button type="button" id="btn-mode-speed" onclick="switchExecutionMode('speed')" class="px-3 py-1.5 rounded-lg font-black transition flex items-center gap-1 bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400">
+                        🚀 速度优先 (市价秒进 · 打动量/财报)
+                    </button>
+                    <button type="button" id="btn-mode-balanced" onclick="switchExecutionMode('balanced')" class="px-3 py-1.5 rounded-lg font-normal transition flex items-center gap-1 bg-slate-800 text-slate-400 border border-slate-700 hover:text-white">
+                        ⚖️ 均衡模式 (Maker挂单省60%费 · 日常)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Action Big Execution Buttons -->
+            <div class="pt-4 grid grid-cols-2 gap-3">
+                <button data-trade-action="BUY_LONG" disabled title="只读验收：该操作尚未启用" onclick="executeTrade('BUY_LONG')" class="cyber-btn-long text-white py-4 rounded-xl font-black text-lg flex flex-col items-center justify-center shadow-lg active:scale-98 transition">
+                    <span>极速开多 (BUY / LONG)</span>
+                    <span class="text-xs font-normal opacity-80">快捷键: [B] 或 [↑ 方向键]</span>
+                </button>
+                <button data-trade-action="SELL_SHORT" disabled title="只读验收：该操作尚未启用" onclick="executeTrade('SELL_SHORT')" class="cyber-btn-short text-white py-4 rounded-xl font-black text-lg flex flex-col items-center justify-center shadow-lg active:scale-98 transition">
+                    <span>极速开空 (SELL / SHORT)</span>
+                    <span class="text-xs font-normal opacity-80">快捷键: [S] 或 [↓ 方向键]</span>
+                </button>
+            </div>
+
+            <!-- Flatten Buttons -->
+            <div class="pt-3 grid grid-cols-3 gap-2">
+                <button data-trade-action="FLATTEN_CURRENT" disabled title="只读验收：该操作尚未启用" onclick="executeTrade('FLATTEN_CURRENT')" class="cyber-btn-panic col-span-2 text-white py-3 rounded-lg font-black text-sm flex items-center justify-center shadow active:scale-98">
+                    <span>🚨 平当前标的 [Space 空格键]</span>
+                </button>
+                <button data-trade-action="PARTIAL_CLOSE" disabled title="只读验收：该操作尚未启用" onclick="executeTrade('PARTIAL_CLOSE')" class="bg-amber-700 hover:bg-amber-600 text-white py-3 rounded-lg font-bold text-sm">
+                    平半仓 50% [H]
+                </button>
+            </div>
+            <div class="pt-2">
+                <button data-trade-action="FLATTEN_ALL" disabled title="只读验收：该操作尚未启用" onclick="executeTrade('FLATTEN_ALL')" class="w-full bg-red-950 hover:bg-red-900 border border-red-700 text-red-300 py-2 rounded text-xs font-black tracking-wider uppercase">
+                    💥 终极急停：全账户一键全平 [Ctrl + Space]
+                </button>
+            </div>
+
+        </section>
+
+        <!-- Right 5 Cols: Dual Slot Monitor & Invariants Audit -->
+        <section class="lg:col-span-5 flex flex-col space-y-4">
+            
+            <!-- Dual Slot Header & Tab -->
+            <div class="bg-slate-900 cyber-border rounded-xl p-4 flex-grow flex flex-col justify-between">
+                <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                    <span class="text-sm font-bold text-slate-300">多币种独立操盘槽位 (按 <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-cyan-400">X</kbd> 切换)</span>
+                    <div class="flex space-x-1">
+                        <button onclick="switchSlot('slot_a')" id="btn-slot-a" class="px-3 py-1 rounded text-xs font-bold bg-cyan-600 text-white">SLOT A</button>
+                        <button onclick="switchSlot('slot_b')" id="btn-slot-b" class="px-3 py-1 rounded text-xs font-bold bg-slate-800 text-slate-400">SLOT B</button>
+                    </div>
+                </div>
+
+                <!-- Position Cards Area -->
+                <div id="position-card" class="py-4 my-auto">
+                    <div class="bg-slate-950/80 rounded-xl p-4 border border-slate-800 text-center text-slate-500 py-8">
+                        <div class="text-3xl mb-2">💤</div>
+                        <div class="text-sm font-bold">当前标的持仓尚未核验</div>
+                        <div class="text-xs text-slate-600 mt-1">按 [B] 开多 或 [S] 开空立即建立极速波段仓位</div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-950 rounded-lg p-3 border border-slate-800 text-xs text-slate-300">
+                    <strong>当前标的保护配置</strong>
+                    <p id="risk-summary" role="status">全部自动保护默认关闭，等待配置同步。</p>
+                    <p>下单、成交、平仓归零分别确认；当前版本的实盘状态见顶部。</p>
+                </div>
+            </div>
+
+            <!-- Real-time Activity Log Feed -->
+            <div class="bg-slate-900 cyber-border rounded-xl p-3 h-48 flex flex-col">
+                <div class="text-xs font-bold text-slate-400 pb-2 border-b border-slate-800 flex justify-between">
+                    <span>指令与状态日志</span>
+                    <span class="text-emerald-400 font-mono">100ms 轮询</span>
+                </div>
+                <div id="log-feed" class="flex-grow overflow-y-auto font-mono text-xs text-slate-300 space-y-1 pt-2">
+                    <div>等待后台连接，尚未完成行情和账户同步。</div>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- Footer Hotkey Cheatsheet -->
+    <footer class="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-xs text-slate-400 flex flex-wrap justify-between items-center">
+        <div><strong class="text-cyan-400">全局键盘盲打指引：</strong> [B/↑]开多 | [S/↓]开空 | [Space]平当前标的 | [Ctrl+Space]全局全平 | [H]平半仓 | [1~6]选仓位比例 | [L]切杠杆 | [F]调斩杀 | [X]切槽位</div>
+        <div class="text-slate-500">OKX-Titan HFT Engine • 严守 No-Cheat 真实数据纪律</div>
+    </footer>
+
+    <script src="/static/console.js?v=sor_dual_mode_v2"></script>
+</body>
+</html>
